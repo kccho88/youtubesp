@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini YouTube 동영상 요약</title>
+    <style>
+        body { font-family: 'Arial', sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 800px; margin: auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #4CAF50; }
+        .input-form { display: flex; margin-bottom: 20px; }
+        .input-form input[type="text"] { flex-grow: 1; padding: 10px; border: 2px solid #ddd; border-radius: 5px 0 0 5px; font-size: 16px; }
+        .input-form button { padding: 10px 20px; background-color: #4CAF50; color: white; border: none; border-radius: 0 5px 5px 0; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        .input-form button:hover { background-color: #45a049; }
+        #loading { text-align: center; color: #777; display: none; margin-top: 20px; }
+        #results-container { margin-top: 30px; padding: 20px; border: 1px solid #eee; border-radius: 5px; background: #fafafa; }
+        #summary-output a { cursor: pointer; color: #1e88e5; text-decoration: none; font-weight: bold; }
+        #summary-output a:hover { text-decoration: underline; }
+        .video-player { margin-bottom: 20px; aspect-ratio: 16 / 9; max-width: 100%; }
+        iframe { width: 100%; height: 100%; border: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✨ Gemini YouTube 요약 서비스</h1>
+        <p>요약하고자 하는 YouTube 동영상의 URL을 입력하고 요약 버튼을 눌러주세요.</p>
+        
+        <div class="input-form">
+            <input type="text" id="youtubeUrl" placeholder="YouTube 동영상 URL (예: https://www.youtube.com/watch?v=...)">
+            <button onclick="getSummary()">요약 생성</button>
+        </div>
+
+        <div id="loading">... AI가 동영상을 분석하고 요약을 생성하는 중입니다. 잠시만 기다려 주세요 ...</div>
+
+        <div id="results-container" style="display:none;">
+            <div class="video-player">
+                <iframe id="videoIframe" width="560" height="315" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+            <div id="summary-output">
+                </div>
+        </div>
+    </div>
+
+    <script>
+        // YouTube URL에서 비디오 ID를 추출하는 함수
+        function extractVideoId(url) {
+            const regex = /(?<=v=)[\w-]+|(?<=youtu\.be\/)[\w-]+/;
+            const match = url.match(regex);
+            return match ? match[0] : null;
+        }
+
+        // 타임스탬프를 초 단위로 변환하는 함수 (MM:SS -> Seconds)
+        function timeToSeconds(timeString) {
+            // [MM:SS-MM:SS] 형식에서 첫 번째 MM:SS만 추출
+            const match = timeString.match(/(\d{2}:\d{2})/);
+            if (!match) return 0;
+            
+            const parts = match[0].split(':');
+            const minutes = parseInt(parts[0], 10);
+            const seconds = parseInt(parts[1], 10);
+            return (minutes * 60) + seconds;
+        }
+
+        // 요약 생성 버튼 클릭 이벤트 처리
+        async function getSummary() {
+            const urlInput = document.getElementById('youtubeUrl');
+            const youtubeUrl = urlInput.value.trim();
+            const loading = document.getElementById('loading');
+            const resultsContainer = document.getElementById('results-container');
+            const summaryOutput = document.getElementById('summary-output');
+            const videoIframe = document.getElementById('videoIframe');
+
+            if (!youtubeUrl) {
+                alert("YouTube URL을 입력해 주세요.");
+                return;
+            }
+
+            const videoId = extractVideoId(youtubeUrl);
+            if (!videoId) {
+                summaryOutput.innerHTML = "<h2>🚨 오류</h2><p>유효하지 않은 YouTube URL 형식입니다.</p>";
+                return;
+            }
+            
+            // UI 초기화 및 로딩 표시
+            loading.style.display = 'block';
+            resultsContainer.style.display = 'none';
+            summaryOutput.innerHTML = '';
+            
+            // 유튜브 플레이어 설정 (클릭 시 이동을 위해 enablejsapi=1 추가)
+            videoIframe.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1`;
+
+            try {
+                // Flask 서버의 POST 엔드포인트에 요청
+                const response = await fetch('/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `url=${encodeURIComponent(youtubeUrl)}`
+                });
+
+                const data = await response.json();
+                
+                // 요약 결과를 표시
+                summaryOutput.innerHTML = data.summary_html;
+                
+                // 타임스탬프 클릭 이벤트 리스너 설정
+                attachTimestampListeners(videoId);
+
+                // 결과 표시
+                resultsContainer.style.display = 'block';
+
+            } catch (error) {
+                summaryOutput.innerHTML = `<h2>🚨 통신 오류</h2><p>서버와 통신하는 중 오류가 발생했습니다: ${error.message}</p>`;
+                console.error('Error fetching summary:', error);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 타임스탬프 클릭 시 동영상으로 이동하는 리스너 설정
+        function attachTimestampListeners(videoId) {
+            const summaryOutput = document.getElementById('summary-output');
+            summaryOutput.querySelectorAll('a[data-time]').forEach(link => {
+                // 기존의 data-time 속성 대신, innerText에서 타임스탬프를 추출
+                const timeInSeconds = timeToSeconds(link.innerText);
+                
+                // 새로운 클릭 이벤트 리스너를 설정
+                link.onclick = (e) => {
+                    e.preventDefault();
+                    // YouTube Iframe API를 사용하여 동영상 이동 (iframe.src를 직접 변경)
+                    const iframe = document.getElementById('videoIframe');
+                    iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&start=${timeInSeconds}`;
+                };
+            });
+        }
+    </script>
+</body>
+</html>
