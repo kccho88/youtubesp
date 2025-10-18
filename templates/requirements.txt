@@ -1,0 +1,4 @@
+# requirements.txt
+flask
+google-genai
+youtube-transcript-api
